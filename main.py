@@ -20,40 +20,7 @@ class Chapter():
     def __str__(self) -> str:
         return f"{self.number} - {self.title}"
 
-    def save(self):
-        volume_folder = self.volume_name
-        volume_html_folder = f"{self.volume_name}/html"
-        volume_pdf_folder =  f"{self.volume_name}/pdf"
-
-        folders = [volume_folder, volume_html_folder, volume_pdf_folder]
-
-        for folder in folders:
-            if not (os.path.exists(folder)):
-                os.mkdir(folder)
-
-        # Number standardization, also a bug
-        # were chapters would order incorrectly
-        if (float(self.number.strip()) < 10):
-            self.number = f"0{self.number}"
-
-        chapter_name = sanitize(f"Capítulo {self.number} - {self.title}")
-
-        content_output = f"""<h3 style="text-align: center;"><strong><em>{chapter_name}</em></strong></h1>\n"""
-        html_out_name = f"{volume_html_folder}/{chapter_name}.html"
-        pdf_out_name = f"{volume_pdf_folder}/{chapter_name}.pdf"
-
-        chapter_file = open(html_out_name, "w", encoding="utf-8")
-        chapter_file.write(content_output)
-        chapter_file.write(self.get_content())
-        chapter_file.close()
-
-        print(f"Starting html to pdf creation for chapter {self.number}...")
-
-        convert_document(html_out_name, pdf_out_name)
-
-        print("Document conversion done!")
-
-    def get_content(self):
+    def get_content(self) -> str:
         request = requests.get(self.url)
         soup = BeautifulSoup(request.text, "html.parser")
         
@@ -65,22 +32,71 @@ class Chapter():
         return out
 
 class Volume():
-    def __init__(self, series: str, chapters: list) -> None:
+    def __init__(self, name: str, series: str, chapters: list) -> None:
+        self.name = name
         self.series = series
         self.chapters = chapters
-        pass
+        self.complete_name = f"{series} - {name}"
+        print(self.complete_name)
+
+    def save_chapter(self, chapter: Chapter):
+        volume_folder = self.complete_name
+        volume_html_folder = f"{volume_folder}/html"
+        volume_pdf_folder =  f"{volume_folder}/pdf"
+
+        chapter_name = sanitize(f"Capítulo {chapter.number} - {chapter.title}")
+
+        html_out_name = f"{volume_html_folder}/{chapter_name}.html"
+        pdf_out_name = f"{volume_pdf_folder}/{chapter_name}.pdf"
+
+        if os.path.exists(html_out_name):
+            print("Chapter already downloaded, skipping!")
+            return
+
+        print(f"Downloading chapter {chapter.number}")
+
+        folders = [volume_folder, volume_html_folder, volume_pdf_folder]
+
+        for folder in folders:
+            if not (os.path.exists(folder)):
+                os.mkdir(folder)
+
+        # Number standardization
+        if (float(chapter.number.strip()) < 10):
+            chapter.number = f"0{chapter.number}"
+
+        content_output = ""
+
+        with open("chapter-title.html", "r", encoding="utf-8") as file:
+            content = file.read()
+            content = content.replace("chapter_name", chapter.title)
+            content = content.replace("chapter_number", chapter.number)
+            content_output = join(content_output, content)
+
+        chapter_file = open(html_out_name, "w", encoding="utf-8")
+        chapter_file.write(content_output)
+        chapter_file.write(chapter.get_content())
+        chapter_file.close()
+
+        print("Converting to pdf...")
+        convert_document(html_out_name, pdf_out_name)
 
     def download(self):
         for chapter in self.chapters:
-            pass
+            self.save_chapter(chapter)
+        
+        merge(self)
 
-def merge(volume_name: str):
+def merge(volume: Volume):
     pdf_merger = PdfFileMerger()
 
-    pdf_path = volume_name + "/pdf/"
+    pdf_path = volume.complete_name + "/pdf/"
     chapter_files = list()
 
-    print(f"Merging {volume_name}")
+    output_epub = f"{volume.complete_name}/{volume.complete_name}.epub"
+    output_pdf = f"{volume.complete_name}/{volume.complete_name}.pdf"
+
+    print(f"Compiling {volume.complete_name}...")
 
     for file in os.listdir(pdf_path):
         if isfile(join(pdf_path, file)):
@@ -88,26 +104,21 @@ def merge(volume_name: str):
 
     chapter_files = natsorted(chapter_files)
 
+    print("Merging pdfs...")
+
     for chapter in chapter_files:
         chapter_title = chapter[chapter.rfind("/") + 1: chapter.rfind(".")]
         inserted_at = len(pdf_merger.pages)
         pdf_merger.add_outline_item(pagenum=inserted_at, title=chapter_title)
         pdf_merger.append(PdfFileReader(open(chapter, "rb")))
-        
-    output_pdf = f"{volume_name}/{volume_name}.pdf"
-    output_epub = f"{volume_name}/{volume_name}.epub"
 
-    print("Creating PDF...")
-    pdf_merger.write(output_pdf)
-    pdf_merger.close()
-
-    print("PDF output is done!")
+    pdf_merger.write(f"{volume.complete_name}/{volume.complete_name}.pdf")
 
     print("Converting to EPUB...")
     convert_document(output_pdf, output_epub,
-        ["--no-default-epub-cover", "--toc-title", "Sumário", "--pretty-print", "--epub-inline-toc"])
+        ["--no-default-epub-cover", "--toc-title", "Sumário", "--pretty-print", "--epub-inline-toc", "--change-justification", "justify"])
 
-    print("EPUB output is done!")
+    print("Done!")
 
 def convert_document(document: str, output: str, options: list() = []) -> str:
     return subprocess.run(['ebook-convert', document, output] + options,  stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT).stdout
@@ -120,7 +131,7 @@ def main():
     soup = parse_page("")
     
     series_title = soup.title.text
-    series_title = series_title[0:series_title.index("|")]
+    series_title = series_title[0:series_title.index("|") - 1]
 
     system("clear")
 
@@ -128,7 +139,6 @@ def main():
     print("Available volumes:")
 
     vol_names = list()
-    volume = Volume(series_title, list())
 
     for item in soup.select(".ts-chl-collapsible"):
         vol_names.append(item.text)
@@ -139,6 +149,8 @@ def main():
         print(f"{vol_names.index(vol)}: {vol}")
 
     selected_vol = int(input("Select the desired volume: "))
+
+    volume = Volume(vol_names[selected_vol], series_title, list())
 
     volumes = soup.select("div.ts-chl-collapsible-content")
     volumes.reverse()
@@ -156,10 +168,7 @@ def main():
     print(f"{len(volume.chapters)} chapter(s) were found.")
     print("Starting downloads...")
 
-    for chapter in volume.chapters:
-        chapter.save()
-
-    merge(volume.chapters[0].volume_name)
+    volume.download()
 
 if __name__ == "__main__":
     main()
