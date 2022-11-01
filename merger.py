@@ -3,7 +3,6 @@ from os.path import join
 import os
 import shutil
 from zipfile import ZipFile
-
 from PyPDF2 import PdfFileReader, PdfMerger
 from bs4 import BeautifulSoup
 from natsort import natsorted
@@ -50,50 +49,37 @@ def merge_to_pdf(folder: str, out: str):
 
 def compile_volume(series: Series, volume: Volume):
     print("Compiling volume...")
-    folder_series = f"{series.title}/"
-    mkdir(folder_series)
 
-    folder_volume = f"{folder_series}{volume.title}/"
-    folder_html = f"{folder_volume}html/"
-    folder_pdf = f"{folder_volume}pdf/"
-    folder_epub = f"{folder_volume}epub/"
+    paths = Paths(series, volume)
+    mkdir(paths.folder_series)
 
-    mkdirs([folder_volume, folder_html, folder_pdf, folder_epub])
-
-    output_pdf = f"{folder_volume}{volume.complete_title}.pdf"
-    output_epub = f"{folder_volume}{volume.complete_title}.epub"
+    mkdirs([paths.folder_volume, paths.folder_html, paths.folder_pdf, paths.folder_epub])
 
     for chapter in volume.chapters:
-        chapter_output_html = f"{folder_html}{chapter.complete_title}.html"
-        chapter_output_pdf = f"{folder_pdf}{chapter.complete_title}.pdf"
+        paths.update(series, volume, chapter)
 
-        if not exists(chapter_output_html):
-            save_as_html(chapter, chapter_output_html)
+        if not exists(paths.chapter_output_html):
+            save_as_html(chapter, paths.chapter_output_html)
 
-        if not exists(chapter_output_pdf):
-            convert_document(chapter_output_html, chapter_output_pdf)
+        if not exists(paths.chapter_output_pdf):
+            convert_document(paths.chapter_output_html, paths.chapter_output_pdf)
 
-    merge_to_pdf(folder_pdf, output_pdf)
+    merge_to_pdf(paths.folder_pdf, paths.output_pdf)
     
-    convert_document(output_pdf, output_epub, ["--no-default-epub-cover", "--toc-title", "Sumário", "--pretty-print", 
-                        "--epub-inline-toc", "--change-justification", "justify", "--extract-to", folder_epub, "--flow-size", "0"])
+    convert_document(paths.output_pdf, paths.output_epub, ["--no-default-epub-cover", "--toc-title", "Sumário", "--pretty-print", 
+                        "--epub-inline-toc", "--change-justification", "justify", "--extract-to", paths.folder_epub, "--flow-size", "0"])
 
-    os.remove(output_epub)
+    os.remove(paths.output_epub)
     beautify_epub(series, volume)
 
 def beautify_epub(series: Series, volume: Volume):
     print("Modifiying the volume...")
+
+    paths = Paths(series, volume)
     
-    folder_series = f"{series.title}/"
-    folder_volume = f"{folder_series}{volume.title}/"
-    folder_epub = f"{folder_volume}epub/"
-
-    output_epub_old = f"{folder_volume}{volume.complete_title}.old.epub"
-    output_epub = f"{folder_volume}{volume.complete_title}.epub"
-
     anchors = list()
 
-    contents_xhtml = read(join(folder_epub, "contents.xhtml"))
+    contents_xhtml = read(join(paths.folder_epub, "contents.xhtml"))
     chapter_header_template = read("chapter-title.html")
 
     soup = BeautifulSoup(contents_xhtml, "html.parser")
@@ -104,7 +90,7 @@ def beautify_epub(series: Series, volume: Volume):
         anchor = href[href.index("#") + 1: ]
         anchors.append(anchor)
 
-    soup = BeautifulSoup(read(join(folder_epub, "index_split_000.html")), "html.parser")
+    soup = BeautifulSoup(read(join(paths.folder_epub, "index_split_000.html")), "html.parser")
     
     for anchor in anchors:
         objects = soup.select(f"a[id='{anchor}']")
@@ -124,25 +110,48 @@ def beautify_epub(series: Series, volume: Volume):
                 number_holder.replace_with('')
                 title_holder.replace_with(BeautifulSoup(header_copy, "html.parser"))
 
-    write(join(folder_epub, "index_split_000.html"), str(soup))
+    write(join(paths.folder_epub, "index_split_000.html"), str(soup))
 
-    os.remove(join(folder_epub, "index_split_001.html"))
+    os.remove(join(paths.folder_epub, "index_split_001.html"))
 
     print("Compressing epub...")
-    zip = ZipFile(output_epub_old, "w")
+    zip = ZipFile(paths.output_epub_old, "w")
 
-    for path in os.listdir(folder_epub):
-        f = join(folder_epub, path)
-        zip.write(f, arcname=os.path.relpath(f, folder_epub))
+    for path in os.listdir(paths.folder_epub):
+        f = join(paths.folder_epub, path)
+        zip.write(f, arcname=os.path.relpath(f, paths.folder_epub))
 
     zip.close()
 
     print("Re-converting output...")
-    convert_document(output_epub_old, output_epub)
+    convert_document(paths.output_epub_old, paths.output_epub)
 
-    shutil.rmtree(folder_epub)
-    os.remove(output_epub_old)
+    shutil.rmtree(paths.folder_epub)
+    os.remove(paths.output_epub_old)
 
 def ProccessSeries(series: Series):
     for volume in series.volumes:
         compile_volume(volume)
+
+class Paths():
+    def __init__(self, series: Series, volume: Volume = None, chapter: Chapter = None) -> None:
+        self.update(series, volume, chapter)
+
+    def update(self, series: Series, volume: Volume = None, chapter: Chapter = None):
+        self.series = series
+        self.volume = volume
+        self.chapter = chapter
+
+        self.folder_series = f"{series.title}/"
+
+        if volume is not None:
+            self.folder_volume = f"{self.folder_series}{volume.title}/"
+            self.folder_epub = f"{self.folder_volume}epub/"
+            self.output_epub_old = f"{self.folder_volume}{volume.complete_title}.old.epub"
+            self.output_epub = f"{self.folder_volume}{volume.complete_title}.epub"
+            self.folder_html = f"{self.folder_volume}html/"
+            self.folder_pdf = f"{self.folder_volume}pdf/"
+
+        if chapter is not None and volume is not None:
+            self.chapter_output_html = f"{self.folder_html}{chapter.complete_title}.html"
+            self.chapter_output_pdf = f"{self.folder_pdf}{chapter.complete_title}.pdf"
