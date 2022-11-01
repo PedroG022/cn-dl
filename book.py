@@ -1,18 +1,20 @@
 from numbers import Number
-
 from utils import read
 
 class Series:
-    def __init__(self, title: str, volumes: list) -> None:
+    def __init__(self, title: str, volumes: list, author = "Unknown") -> None:
         self.title = title
         self.volumes = volumes
+        self.author = author
 
 class Volume:
-    def __init__(self, title: str, series: str, chapters: list) -> None:
+    def __init__(self, number: Number, title: str, series: str, chapters: list, cover_file = "none") -> None:
+        self.number = number
         self.title = title
         self.series = series
         self.chapters = chapters
         self.complete_title = f"{series} - {title}"
+        self.cover_file = cover_file
 
     def __str__(self) -> str:
         return self.complete_title
